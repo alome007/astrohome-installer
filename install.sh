@@ -226,6 +226,12 @@ build_repo() {
   : > "$INSTALL_LOG"
   log "build log: $INSTALL_LOG"
 
+  # pnpm respects NODE_ENV at install time. If the caller's shell has
+  # NODE_ENV=production exported (common in .zshrc/.bashrc on prod hosts),
+  # devDependencies like typescript/tsx/lefthook get skipped and the build
+  # then dies with `tsc: command not found`. Force-unset for the install.
+  unset NODE_ENV
+
   run_step "installing dependencies"   pnpm install --frozen-lockfile               || die "pnpm install failed"
   run_step "compiling TypeScript"      pnpm build                                   || die "pnpm build failed"
   run_step "downloading ML models"     pnpm --filter @astrohome/kernel setup:models || die "model download failed"
