@@ -202,23 +202,45 @@ clone_or_update_repo() {
   fi
 }
 
+run_step() {
+  local label="$1"; shift
+  local start
+  start="$(date +%s)"
+  printf '\033[1;34m[%s]\033[0m %-42s' "$TAG" "$label" >&2
+  if "$@" >> "$INSTALL_LOG" 2>&1; then
+    printf '\033[1;32m✓\033[0m %ss\n' "$(($(date +%s) - start))" >&2
+    return 0
+  fi
+  local rc=$?
+  printf '\033[1;31m✗\033[0m\n' >&2
+  warn "step failed — last 30 log lines:"
+  tail -30 "$INSTALL_LOG" >&2 || true
+  warn "full log: $INSTALL_LOG"
+  return "$rc"
+}
+
 build_repo() {
   cd "$ASTROHOME_DIR"
-  log "pnpm install"
-  pnpm install --frozen-lockfile
-  log "pnpm build"
-  pnpm build
-  log "pnpm --filter @astrohome/kernel setup:models"
-  pnpm --filter @astrohome/kernel setup:models
-  log "pnpm --filter @astrohome/web build"
-  if ! pnpm --filter @astrohome/web build; then
-    warn "web build failed — kernel will run but /app/ will 404"
+  INSTALL_LOG="$ASTROHOME_DIR/data/install.log"
+  mkdir -p "$(dirname "$INSTALL_LOG")"
+  : > "$INSTALL_LOG"
+  log "build log: $INSTALL_LOG"
+
+  run_step "installing dependencies"   pnpm install --frozen-lockfile               || die "pnpm install failed"
+  run_step "compiling TypeScript"      pnpm build                                   || die "pnpm build failed"
+  run_step "downloading ML models"     pnpm --filter @astrohome/kernel setup:models || die "model download failed"
+
+  if run_step "building web client"    pnpm --filter @astrohome/web build; then
+    :
+  else
+    warn "web build failed — kernel will run but /app/ will 404 (see $INSTALL_LOG)"
     WEB_BUILD_FAILED=1
   fi
+
   for f in packages/kernel/dist/boot.js \
            packages/clients/whatsapp/dist/bot.js \
            packages/clients/cli/dist/cli.js; do
-    [ -f "$ASTROHOME_DIR/$f" ] || die "build artifact missing: $f"
+    [ -f "$ASTROHOME_DIR/$f" ] || die "build artifact missing: $f (see $INSTALL_LOG)"
   done
   log "build artifacts verified"
 }
