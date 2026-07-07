@@ -282,11 +282,25 @@ clone_or_update_repo() {
 
   if [ -d "$ASTROHOME_DIR/.git" ]; then
     log "updating $ASTROHOME_DIR"
-    local git_env=(git -C "$ASTROHOME_DIR")
-    [ -n "$token" ] && git_env+=(-c "http.extraheader=AUTHORIZATION: bearer $token")
-    "${git_env[@]}" fetch --quiet origin
-    "${git_env[@]}" checkout --quiet "$ASTROHOME_BRANCH"
-    "${git_env[@]}" pull --ff-only origin "$ASTROHOME_BRANCH"
+    local origin_url fetch_url="origin"
+    origin_url="$(git -C "$ASTROHOME_DIR" remote get-url origin 2>/dev/null || true)"
+    # GitHub's git-over-HTTPS rejects `Authorization: Bearer <PAT>` with
+    # "invalid credentials" — the token must ride as basic-auth. Use the same
+    # URL-embedded x-access-token form the clone path uses; fetch from it
+    # directly so the token is never persisted into the remote. Prompt for a
+    # token here too (the update path used to only read $GH_TOKEN, so a
+    # re-run on an existing checkout silently had no credentials).
+    if [[ "$origin_url" == https://github.com/* ]]; then
+      if [ -z "$token" ]; then
+        log "a GitHub token is needed to update this private checkout"
+        token="$(prompt_tty 'GitHub token (hidden)' 1)"
+      fi
+      fetch_url="${origin_url/https:\/\//https://x-access-token:${token}@}"
+    fi
+    git -C "$ASTROHOME_DIR" fetch --quiet "$fetch_url" "$ASTROHOME_BRANCH" ||
+      die "git fetch failed — the token may be expired or lack Contents:Read on the repo. Regenerate at https://github.com/settings/personal-access-tokens"
+    git -C "$ASTROHOME_DIR" checkout --quiet "$ASTROHOME_BRANCH"
+    git -C "$ASTROHOME_DIR" merge --ff-only FETCH_HEAD
     return
   fi
 
