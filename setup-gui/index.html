@@ -280,10 +280,24 @@
     </section>
 
     <section id="s-access" hidden>
-      <h1>Reaching Astro</h1>
-      <p class="lead">Local-only works on this machine and your home network. A free Cloudflare Tunnel adds a public HTTPS address for phones and WhatsApp — no router changes.</p>
+      <h1>Ports &amp; access</h1>
+      <p class="lead">Pick the ports each service runs on — Astro derives every internal address from them, so nothing drifts. Then choose how you reach the kernel.</p>
+
+      <div class="envsection">
+        <h2>Ports</h2>
+        <label class="field"><span class="name">Kernel gateway port</span>
+          <input type="text" inputmode="numeric" id="port-kernel" value="8420" spellcheck="false" autocomplete="off">
+          <span class="help">The web UI + API. Everything talks to Astro here.</span>
+        </label>
+        <label class="field"><span class="name">WhatsApp bot port</span>
+          <input type="text" inputmode="numeric" id="port-whatsapp" value="8430" spellcheck="false" autocomplete="off">
+          <span class="help">Only used if you run the WhatsApp bot. Leave as-is otherwise.</span>
+        </label>
+        <p class="hint" id="port-hint"></p>
+      </div>
+
       <div class="choices">
-        <button class="choice" data-access="local" aria-pressed="true"><span class="t">Local only</span><span class="d">http://localhost:8420 — add a tunnel any time later</span></button>
+        <button class="choice" data-access="local" aria-pressed="true"><span class="t">Local only</span><span class="d" id="local-desc">http://localhost:8420 — add a tunnel any time later</span></button>
         <button class="choice" data-access="token" aria-pressed="false"><span class="t">Cloudflare Tunnel — token</span><span class="d">Paste a tunnel token from the Zero Trust dashboard</span></button>
       </div>
       <label class="field" id="tunnel-token-field" hidden><span class="name">Tunnel token</span>
@@ -301,7 +315,7 @@
         <p class="stamp">✓ Commissioned</p>
         <h2>Astro is installed</h2>
         <dl id="cert-facts"></dl>
-        <p>Open <a href="http://localhost:8420" target="_blank" rel="noopener">http://localhost:8420</a> to finish household setup — the first-run wizard creates your family's accounts. This setup page can be closed.</p>
+        <p>Open <a id="cert-open-link" href="http://localhost:8420" target="_blank" rel="noopener">http://localhost:8420</a> to finish household setup — the first-run wizard creates your family's accounts. This setup page can be closed.</p>
         <p class="stamp" style="margin-top:16px">To remove later: <span class="mono">scripts/uninstall.sh</span> in the install directory (keeps your data; --purge snapshots it to ~ first)</p>
       </div>
     </section>
@@ -436,9 +450,22 @@ function renderField(f) {
 let envPage = 0; // 0 = essentials, 1 = optional
 let hasOptional = false;
 
+// Keys the Ports step owns and derives — hidden from the generic config
+// form so there's no double-entry, and their values are injected at install
+// time from the two chosen port numbers.
+const PORT_MANAGED = new Set([
+  "ASTROHOME_GATEWAY_PORT",
+  "WHATSAPP_BOT_PORT",
+  "KERNEL_URL",
+  "WHATSAPP_BOT_URL",
+  "WEB_BASE_URL",
+  "KERNEL_PUBLIC_URL",
+]);
+
 function renderEnvForm() {
   const bySection = new Map();
   for (const f of envTemplate) {
+    if (PORT_MANAGED.has(f.key)) continue;
     if (!bySection.has(f.section)) bySection.set(f.section, []);
     bySection.get(f.section).push(f);
   }
@@ -609,7 +636,44 @@ for (const btn of document.querySelectorAll("[data-access]")) {
     $("tunnel-token-field").hidden = accessMode !== "token";
   });
 }
+
+function readPort(id) {
+  const raw = $(id).value.trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return n >= 1 && n <= 65535 ? n : null;
+}
+function validatePorts() {
+  const kernel = readPort("port-kernel");
+  const whatsapp = readPort("port-whatsapp");
+  const hint = $("port-hint");
+  if (kernel === null || whatsapp === null) {
+    hint.textContent = "Ports must be whole numbers between 1 and 65535.";
+    hint.className = "hint bad";
+    return null;
+  }
+  if (kernel === whatsapp) {
+    hint.textContent = "The kernel and WhatsApp ports must be different.";
+    hint.className = "hint bad";
+    return null;
+  }
+  hint.textContent = "";
+  $("local-desc").textContent = `http://localhost:${kernel} — add a tunnel any time later`;
+  return { kernel, whatsapp };
+}
+for (const id of ["port-kernel", "port-whatsapp"]) {
+  $(id).addEventListener("input", validatePorts);
+}
+
+let ports = { kernel: 8420, whatsapp: 8430 };
 $("access-next").addEventListener("click", () => {
+  const p = validatePorts();
+  if (p === null) {
+    $("port-kernel").scrollIntoView({ block: "center" });
+    return;
+  }
+  ports = p;
+  stamp("ports", `kernel ${p.kernel} · whatsapp ${p.whatsapp}`);
   stamp("access", accessMode === "local" ? "local only" : "cloudflare tunnel");
   goTo(5);
 });
@@ -625,6 +689,14 @@ $("go").addEventListener("click", async () => {
   for (const input of document.querySelectorAll("[data-env]")) {
     if (input.value.trim() !== "") env[input.dataset.env] = input.value.trim();
   }
+  // Derive every port-dependent address from the two chosen ports so they
+  // can't drift. A tunnel later overwrites WEB_BASE_URL with the public URL.
+  env.ASTROHOME_GATEWAY_PORT = String(ports.kernel);
+  env.KERNEL_URL = `http://127.0.0.1:${ports.kernel}`;
+  env.KERNEL_PUBLIC_URL = `http://localhost:${ports.kernel}`;
+  env.WEB_BASE_URL = `http://localhost:${ports.kernel}`;
+  env.WHATSAPP_BOT_PORT = String(ports.whatsapp);
+  env.WHATSAPP_BOT_URL = `http://127.0.0.1:${ports.whatsapp}`;
   await api("install", {
     installDir: record.location.text,
     owner: $("owner").value.trim(),
@@ -655,6 +727,10 @@ $("go").addEventListener("click", async () => {
         .filter(([, v]) => v.text !== undefined)
         .map(([k, v]) => `<dt>${k}</dt><dd>${v.text}</dd>`)
         .join("");
+      const kernelUrl = `http://localhost:${ports.kernel}`;
+      const link = $("cert-open-link");
+      link.href = kernelUrl;
+      link.textContent = kernelUrl;
       $("cert").hidden = false;
       $("cert").scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
