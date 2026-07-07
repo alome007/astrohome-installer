@@ -584,6 +584,8 @@ print_summary() {
   Health:        $health_url
   CLI:           astrohome --help
   Service ctl:   astrohome service [start|stop|restart|status|logs]
+  Edit config:   astrohome env             (browser GUI; or: env edit|set|get|list)
+                 saves .env and restarts the kernel to apply
   Logs:          $ASTROHOME_DIR/data/logs/  (or: astrohome service logs)
   Update:        astrohome-update           (snapshots DB + WhatsApp auth first)
   Restore data:  bash $ASTROHOME_DIR/scripts/install/restore-data.sh $ASTROHOME_DIR <snapshot|dir|url>
