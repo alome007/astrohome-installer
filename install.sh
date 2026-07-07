@@ -370,7 +370,15 @@ build_repo() {
 
   run_step "installing dependencies"   pnpm install --frozen-lockfile               || die "pnpm install failed"
   run_step "compiling TypeScript"      pnpm build                                   || die "pnpm build failed"
+  # Download the ML models to the SAME path the kernel reads at boot
+  # ($ASTROHOME_DIR/data/models). Without this, setup:models runs with cwd
+  # packages/kernel and writes to packages/kernel/data/models, which the
+  # kernel never looks at — so it re-downloads the 97MB model on first boot,
+  # adding minutes. ASTROHOME_MODELS_DIR is honored by download-models.ts;
+  # it only affects this build step (the kernel service reads its own .env).
+  export ASTROHOME_MODELS_DIR="$ASTROHOME_DIR/data/models"
   run_step "downloading ML models"     pnpm --filter @astrohome/kernel setup:models || die "model download failed"
+  unset ASTROHOME_MODELS_DIR
 
   if run_step "building web client"    pnpm --filter @astrohome/web build; then
     :
@@ -465,6 +473,30 @@ print_tunnel_help() {
 EOF
 }
 
+# Poll the kernel's health endpoint on its chosen port until it answers.
+# The gateway binds LAST in boot (after migrations, embeddings, and every
+# plugin), so first boot can take a couple of minutes — we do not call the
+# install a success until the URL actually responds. Returns 0 when live,
+# 1 on timeout. Tunable via ASTROHOME_KERNEL_WAIT (number of 5s intervals).
+verify_kernel_live() {
+  local port health i=0 max="${ASTROHOME_KERNEL_WAIT:-72}"
+  port="$(awk -F= '/^ASTROHOME_GATEWAY_PORT=/{print $2; exit}' "$ASTROHOME_DIR/.env" 2>/dev/null || true)"
+  port="${port:-8420}"
+  health="http://127.0.0.1:$port/api/v1/health"
+  log "waiting for the kernel to answer at $health"
+  log "  first boot fetches ML models + loads plugins — up to $((max * 5 / 60)) min"
+  while [ "$i" -lt "$max" ]; do
+    if curl -fsS -o /dev/null -m 5 "$health" 2>/dev/null; then
+      log "✓ kernel is live — http://localhost:$port"
+      return 0
+    fi
+    sleep 5
+    i=$((i + 1))
+    if [ $((i % 6)) -eq 0 ]; then log "  still booting… ($((i * 5))s elapsed)"; fi
+  done
+  return 1
+}
+
 verify_tunnel_live() {
   local public_url
   public_url="$(awk -F= '/^WEB_BASE_URL=/{sub(/^WEB_BASE_URL=/,""); print; exit}' "$ASTROHOME_DIR/.env" 2>/dev/null || true)"
@@ -490,7 +522,9 @@ verify_tunnel_live() {
 
 configure_remote_access() {
   if [ "${ASTROHOME_SKIP_TUNNEL:-0}" = 1 ]; then
-    log "remote access skipped (ASTROHOME_SKIP_TUNNEL=1) — kernel will only be reachable on localhost:8420"
+    local kp
+    kp="$(awk -F= '/^ASTROHOME_GATEWAY_PORT=/{print $2; exit}' "$ASTROHOME_DIR/.env" 2>/dev/null || true)"
+    log "remote access skipped (ASTROHOME_SKIP_TUNNEL=1) — kernel will only be reachable on localhost:${kp:-8420}"
     return 0
   fi
 
@@ -632,17 +666,27 @@ EOF
   configure_data_restore
   configure_remote_access
   run_subscript link-cli.sh "$ASTROHOME_DIR"
+  local kernel_ok=0
   if [ "${ASTROHOME_SKIP_SERVICES:-0}" != 1 ]; then
     if [ "$OS" = macos ]; then run_subscript services-macos.sh "$ASTROHOME_DIR"
     else                        run_subscript services-linux.sh "$ASTROHOME_DIR"
     fi
-    # Tunnel verification only makes sense after the kernel service is up.
+    # Don't declare success until the kernel actually answers on its port.
+    verify_kernel_live || kernel_ok=1
+    # Tunnel verification only makes sense after the kernel is up.
     if [ "${ASTROHOME_SKIP_TUNNEL:-0}" != 1 ] && [ -f "$HOME/.cloudflared/config.yml" ]; then
       verify_tunnel_live || true
     fi
   fi
 
   print_summary
+  if [ "$kernel_ok" -ne 0 ]; then
+    warn "the kernel did not answer on its port within the wait window."
+    warn "it may still be finishing first boot — watch it with:"
+    warn "  astrohome service logs --service kernel -f"
+    warn "then open the kernel URL above. Re-running the installer is safe."
+    exit 1
+  fi
 }
 
 main "$@"
