@@ -16,6 +16,10 @@
 #   ASTROHOME_BRANCH      branch (default: main)
 #   ASTROHOME_DOMAIN      Cloudflare domain for tunnel (skips prompt)
 #   ASTROHOME_TUNNEL_TOKEN  use token-mode tunnel (skip cloudflared login flow)
+#   ASTROHOME_RESTORE_FROM  restore data during install: a .db snapshot, a
+#                           whatsapp-auth-*.tar.gz, a previous install's data/
+#                           directory, or an https:// URL to one of those
+#   ASTROHOME_SKIP_RESTORE=1 skip the restore prompt (fresh data)
 #   ASTROHOME_SKIP_TUNNEL=1, ASTROHOME_SKIP_SERVICES=1, ASTROHOME_NONINTERACTIVE=1
 
 set -euo pipefail
@@ -258,6 +262,54 @@ run_subscript() {
   bash "$path" "$@"
 }
 
+configure_data_restore() {
+  if [ "${ASTROHOME_SKIP_RESTORE:-0}" = 1 ]; then
+    log "data restore skipped (ASTROHOME_SKIP_RESTORE=1) — starting fresh"
+    return 0
+  fi
+
+  if [ -n "${ASTROHOME_RESTORE_FROM:-}" ]; then
+    run_subscript restore-data.sh "$ASTROHOME_DIR" "$ASTROHOME_RESTORE_FROM"
+    return $?
+  fi
+
+  if [ "${ASTROHOME_NONINTERACTIVE:-0}" = 1 ]; then
+    log "non-interactive mode + no ASTROHOME_RESTORE_FROM — starting fresh"
+    return 0
+  fi
+
+  cat >&2 <<EOF
+
+  ▸ Data
+    Start fresh, or restore Astro's memory from a backup? Accepted sources:
+      • a snapshot            data/backups/astrohome-YYYY-MM-DD.db
+      • a WhatsApp archive    whatsapp-auth-*.tar.gz
+      • a previous install's  data/ directory (or its backups/ directory)
+      • an https:// URL to any of the above
+
+EOF
+  local choice
+  printf '  Restore from a backup? [y/N]: ' >&2
+  read -r choice </dev/tty || choice="n"
+  case "$choice" in
+    y|Y|yes)
+      local src
+      src="$(prompt_tty 'Backup path or https URL')"
+      if run_subscript restore-data.sh "$ASTROHOME_DIR" "$src"; then
+        return 0
+      fi
+      warn "restore failed — fix the source and re-run later with:"
+      warn "  bash $ASTROHOME_DIR/scripts/install/restore-data.sh $ASTROHOME_DIR <source>"
+      printf '  Continue installing with fresh data? [Y/n]: ' >&2
+      read -r choice </dev/tty || choice="y"
+      case "$choice" in n|N|no) die "install aborted at restore step" ;; esac
+      ;;
+    *)
+      log "starting fresh — restore any time later with scripts/install/restore-data.sh"
+      ;;
+  esac
+}
+
 print_tunnel_help() {
   cat <<EOF >&2
 
@@ -365,6 +417,8 @@ print_summary() {
   Service ctl:   astrohome service [start|stop|restart|status|logs]
   Logs:          $ASTROHOME_DIR/data/logs/  (or: astrohome service logs)
   Update:        astrohome-update           (snapshots DB + WhatsApp auth first)
+  Restore data:  bash $ASTROHOME_DIR/scripts/install/restore-data.sh $ASTROHOME_DIR <snapshot|dir|url>
+                 (stop services first; current data is kept aside, never deleted)
 
   Next steps:
     • WhatsApp pairing:     astrohome service logs --service whatsapp -f
@@ -389,6 +443,7 @@ main() {
   build_repo
 
   run_subscript seed-env.sh "$ASTROHOME_DIR"
+  configure_data_restore
   configure_remote_access
   run_subscript link-cli.sh "$ASTROHOME_DIR"
   if [ "${ASTROHOME_SKIP_SERVICES:-0}" != 1 ]; then
