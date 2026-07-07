@@ -20,6 +20,9 @@
 #                           whatsapp-auth-*.tar.gz, a previous install's data/
 #                           directory, or an https:// URL to one of those
 #   ASTROHOME_SKIP_RESTORE=1 skip the restore prompt (fresh data)
+#
+# Uninstall (also works via the curl one-liner):
+#   bash install.sh --uninstall [--purge]
 #   ASTROHOME_SKIP_TUNNEL=1, ASTROHOME_SKIP_SERVICES=1, ASTROHOME_NONINTERACTIVE=1
 
 set -euo pipefail
@@ -534,6 +537,9 @@ print_summary() {
   Update:        astrohome-update           (snapshots DB + WhatsApp auth first)
   Restore data:  bash $ASTROHOME_DIR/scripts/install/restore-data.sh $ASTROHOME_DIR <snapshot|dir|url>
                  (stop services first; current data is kept aside, never deleted)
+  Uninstall:     bash $ASTROHOME_DIR/scripts/uninstall.sh
+                 (removes services + CLI links, keeps data/; --purge deletes
+                  everything after writing a final DB snapshot to ~)
 
   Next steps:
     • WhatsApp pairing:     astrohome service logs --service whatsapp -f
@@ -549,6 +555,16 @@ EOF
 }
 
 main() {
+  case "${1:-}" in
+    --uninstall)
+      shift || true
+      [ -f "$ASTROHOME_DIR/scripts/uninstall.sh" ] ||
+        die "no AstroHome install found at $ASTROHOME_DIR (set ASTROHOME_DIR=<path> if it lives elsewhere)"
+      export ASTROHOME_DIR
+      exec bash "$ASTROHOME_DIR/scripts/uninstall.sh" "$@"
+      ;;
+  esac
+
   detect_platform
   preflight
   install_runtime
