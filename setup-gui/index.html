@@ -144,6 +144,38 @@
   .req { color: var(--fail); }
   .genned { font-size: 12px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
+  /* Configuration sub-stepper (Essentials → Optional) */
+  .substep {
+    display: flex; gap: 10px; margin: 0 0 28px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .substep .pill {
+    display: flex; gap: 7px; align-items: baseline;
+    padding: 6px 12px; border: 1px solid var(--hairline); color: var(--muted);
+  }
+  .substep .pill.current { color: var(--accent); border-color: var(--accent); }
+  .substep .pill.done { color: var(--ink); }
+  .substep .pill .n { opacity: 0.7; }
+
+  /* Optional settings — collapsed accordions so the long tail stays folded */
+  details.envsection {
+    margin: 0 0 10px; border: 1px solid var(--hairline); background: var(--panel);
+  }
+  details.envsection > summary {
+    padding: 12px 16px; cursor: pointer; list-style: none;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  details.envsection > summary::-webkit-details-marker { display: none; }
+  details.envsection > summary::after { content: "+"; color: var(--accent); font-size: 14px; }
+  details.envsection[open] > summary { color: var(--accent); border-bottom: 1px solid var(--hairline); }
+  details.envsection[open] > summary::after { content: "–"; }
+  details.envsection .fields { padding: 4px 16px 14px; }
+  details.envsection .count { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
   .actions { display: flex; gap: 14px; align-items: center; margin-top: 36px; }
   button.primary {
     font: inherit; font-weight: 600; font-size: 15.5px;
@@ -225,10 +257,15 @@
     </section>
 
     <section id="s-env" hidden>
-      <h1>Configure the household</h1>
-      <p class="lead">Generated from the project's own <span class="mono">.env.example</span> — required fields are marked, secrets are pre-generated, everything can be changed later in <span class="mono">.env</span>.</p>
-      <div id="envform"></div>
-      <div class="actions"><button class="primary" id="env-next">Save configuration</button></div>
+      <h1 id="env-title">Essentials</h1>
+      <p class="lead" id="env-lead">The provider key and admin password Astro needs to boot. Secrets are pre-generated for you; everything here is editable later in <span class="mono">.env</span>.</p>
+      <div class="substep" id="env-substep"></div>
+      <div id="envform-essentials"></div>
+      <div id="envform-optional" hidden></div>
+      <div class="actions">
+        <button class="primary" id="env-next">Continue</button>
+        <button class="quiet" id="env-back" hidden>Back to essentials</button>
+      </div>
     </section>
 
     <section id="s-data" hidden>
@@ -265,6 +302,7 @@
         <h2>Astro is installed</h2>
         <dl id="cert-facts"></dl>
         <p>Open <a href="http://localhost:8420" target="_blank" rel="noopener">http://localhost:8420</a> to finish household setup — the first-run wizard creates your family's accounts. This setup page can be closed.</p>
+        <p class="stamp" style="margin-top:16px">To remove later: <span class="mono">scripts/uninstall.sh</span> in the install directory (keeps your data; --purge snapshots it to ~ first)</p>
       </div>
     </section>
   </main>
@@ -285,10 +323,16 @@ const STEPS = [
   { id: "access", title: "Access" },
   { id: "install", title: "Commission" },
 ];
+// The ledger map: every value here is a { text, step } stamp and is
+// iterated by renderLedger. Raw non-stamp values must NOT live here — a
+// bare value (e.g. null) would make renderLedger read `.step` off it and
+// throw. The chosen restore source is kept in its own variable for that
+// reason.
 const record = {};
 let current = 0;
 let envTemplate = [];
 let restoreChoice = null;
+let restoreSource = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -371,31 +415,95 @@ $("gh-next").addEventListener("click", async () => {
   }
 });
 
+function escapeAttr(value) {
+  return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function renderField(f) {
+  const mark = f.tag === "REQUIRED" ? ' <span class="req">*</span>' : f.group ? ' <span class="req">*one of</span>' : "";
+  const value = escapeAttr(f.generated ?? f.default ?? "");
+  return `<label class="field"><span class="name">${f.key}${mark}</span>
+    <input type="text" data-env="${f.key}" ${f.group ? `data-group="${f.group}"` : ""} ${f.tag === "REQUIRED" ? "data-required=1" : ""}
+           value="${value}" spellcheck="false" autocomplete="off">
+    ${f.generated ? '<span class="genned">generated for you — keep or replace</span>' : ""}
+    ${f.help ? `<span class="help">${f.help.replace(/</g, "&lt;")}</span>` : ""}
+  </label>`;
+}
+
+// A section is "essential" when it carries a required or one-of field.
+// Everything else is optional and folds into collapsed accordions so the
+// form's long tail doesn't wall off the finish line.
+let envPage = 0; // 0 = essentials, 1 = optional
+let hasOptional = false;
+
 function renderEnvForm() {
   const bySection = new Map();
   for (const f of envTemplate) {
     if (!bySection.has(f.section)) bySection.set(f.section, []);
     bySection.get(f.section).push(f);
   }
-  $("envform").innerHTML = [...bySection.entries()].map(([section, fields]) => `
-    <div class="envsection">
-      <h2>${section || "General"}</h2>
-      ${fields.map((f) => `
-        <label class="field"><span class="name">${f.key}${f.tag === "REQUIRED" ? ' <span class="req">*</span>' : ""}${f.group ? ' <span class="req">*one of</span>' : ""}</span>
-          <input type="text" data-env="${f.key}" ${f.group ? `data-group="${f.group}"` : ""} ${f.tag === "REQUIRED" ? "data-required=1" : ""}
-                 value="${f.generated ?? f.default ?? ""}" spellcheck="false" autocomplete="off">
-          ${f.generated ? '<span class="genned">generated for you — keep or replace</span>' : ""}
-          ${f.help ? `<span class="help">${f.help.replace(/</g, "&lt;")}</span>` : ""}
-        </label>`).join("")}
-    </div>`).join("");
+  const essential = [];
+  const optional = [];
+  for (const [section, fields] of bySection) {
+    const required = fields.some((f) => f.tag === "REQUIRED" || f.group);
+    (required ? essential : optional).push([section, fields]);
+  }
+  hasOptional = optional.length > 0;
+
+  $("envform-essentials").innerHTML = essential
+    .map(
+      ([section, fields]) =>
+        `<div class="envsection"><h2>${section || "General"}</h2>${fields.map(renderField).join("")}</div>`,
+    )
+    .join("");
+
+  $("envform-optional").innerHTML = optional
+    .map(
+      ([section, fields]) => `
+      <details class="envsection">
+        <summary>${section || "General"}<span class="count">${fields.length} setting${fields.length === 1 ? "" : "s"}</span></summary>
+        <div class="fields">${fields.map(renderField).join("")}</div>
+      </details>`,
+    )
+    .join("");
+
+  showEnvPage(0);
 }
-$("env-next").addEventListener("click", () => {
-  const inputs = [...document.querySelectorAll("[data-env]")];
+
+function renderEnvSubstep() {
+  const steps = hasOptional ? ["Essentials", "Optional"] : ["Essentials"];
+  $("env-substep").innerHTML = steps
+    .map((label, i) => {
+      const cls = i === envPage ? "current" : i < envPage ? "done" : "";
+      return `<span class="pill ${cls}"><span class="n">${i + 1}</span>${label}</span>`;
+    })
+    .join("");
+}
+
+function showEnvPage(page) {
+  envPage = page;
+  const essentials = page === 0;
+  $("envform-essentials").hidden = !essentials;
+  $("envform-optional").hidden = essentials;
+  $("env-back").hidden = essentials;
+  $("env-title").textContent = essentials ? "Essentials" : "Optional settings";
+  $("env-lead").innerHTML = essentials
+    ? 'The provider key and admin password Astro needs to boot. Secrets are pre-generated for you; everything here is editable later in <span class="mono">.env</span>.'
+    : "Integrations and tuning — all optional, sensible defaults already applied. Open a section only if you want to change it, or skip straight to saving.";
+  $("env-next").textContent = essentials && hasOptional ? "Continue" : "Save configuration";
+  renderEnvSubstep();
+  window.scrollTo({ top: 0 });
+}
+
+// Validate the required + one-of fields (which all live on the essentials
+// page). Returns true when satisfied; focuses the first offender otherwise.
+function essentialsSatisfied() {
+  const inputs = [...$("envform-essentials").querySelectorAll("[data-env]")];
   for (const input of inputs.filter((i) => i.dataset.required)) {
     if (input.value.trim() === "") {
       input.focus();
       input.scrollIntoView({ block: "center" });
-      return;
+      return false;
     }
   }
   const groups = new Map();
@@ -408,13 +516,31 @@ $("env-next").addEventListener("click", () => {
       const first = inputs.find((i) => i.dataset.group);
       first.focus();
       first.scrollIntoView({ block: "center" });
+      return false;
+    }
+  }
+  return true;
+}
+
+function finalizeEnv() {
+  const filled = [...document.querySelectorAll("[data-env]")].filter(
+    (i) => i.value.trim() !== "",
+  ).length;
+  stamp("config", `${filled} values set`);
+  goTo(3);
+}
+
+$("env-next").addEventListener("click", () => {
+  if (envPage === 0) {
+    if (!essentialsSatisfied()) return;
+    if (hasOptional) {
+      showEnvPage(1);
       return;
     }
   }
-  const filled = inputs.filter((i) => i.value.trim() !== "").length;
-  stamp("config", `${filled} values set`);
-  goTo(3);
+  finalizeEnv();
 });
+$("env-back").addEventListener("click", () => showEnvPage(0));
 
 function renderRestoreChoices(priorData) {
   const cards = [
@@ -469,7 +595,7 @@ $("data-next").addEventListener("click", () => {
   } else if (restoreChoice === "custom") {
     source = $("restore-path").dataset.ok;
   }
-  record.restoreFrom = source;
+  restoreSource = source;
   stamp("memory", source ?? "fresh start");
   goTo(4);
 });
@@ -504,7 +630,7 @@ $("go").addEventListener("click", async () => {
     owner: $("owner").value.trim(),
     token: $("ghtoken").value,
     env,
-    restoreFrom: record.restoreFrom,
+    restoreFrom: restoreSource,
     tunnel: accessMode === "token" ? { token: $("tunnel-token").value } : null,
   });
 

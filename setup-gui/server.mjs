@@ -15,15 +15,15 @@
 // Security: binds 127.0.0.1 only; every route lives under a random token
 // prefix so other local pages can't drive the API blind.
 
-import { spawn, execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   openSync,
-  readSync,
-  closeSync,
   readFileSync,
+  readSync,
   readdirSync,
   statSync,
   writeFileSync,
