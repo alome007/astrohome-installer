@@ -24,7 +24,8 @@
 
 set -euo pipefail
 
-ASTROHOME_INSTALLER_VERSION="0.1.0"
+ASTROHOME_INSTALLER_VERSION="0.2.0"
+ASTROHOME_DIR_PRESET="${ASTROHOME_DIR:+1}"
 ASTROHOME_DIR="${ASTROHOME_DIR:-$HOME/astrohome}"
 ASTROHOME_REPO="${ASTROHOME_REPO:-}"
 ASTROHOME_REPO_NAME="${ASTROHOME_REPO_NAME:-astrohome-core}"
@@ -76,6 +77,113 @@ prompt_tty() {
     fi
   done
   printf '%s' "$value"
+}
+
+expand_tilde() {
+  case "$1" in
+    "~") printf '%s' "$HOME" ;;
+    "~/"*) printf '%s' "$HOME/${1#\~/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# What lives at a candidate install path?
+#   missing | empty | checkout (a git clone we can update) |
+#   occupied (non-empty, not a checkout — refuse, it may be a previous
+#   deployment's runtime state: .env, data/, homeassistant/ ...)
+classify_dir() {
+  local dir="$1"
+  if [ ! -e "$dir" ]; then printf 'missing'; return; fi
+  if [ -d "$dir/.git" ]; then printf 'checkout'; return; fi
+  if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then printf 'empty'; return; fi
+  printf 'occupied'
+}
+
+choose_install_dir() {
+  # An explicit ASTROHOME_DIR or non-interactive run keeps today's behavior;
+  # the guard in clone_or_update_repo still refuses an occupied target.
+  if [ -n "$ASTROHOME_DIR_PRESET" ] || [ "${ASTROHOME_NONINTERACTIVE:-0}" = 1 ]; then
+    return 0
+  fi
+  [ -r /dev/tty ] || return 0
+
+  while :; do
+    printf '  Install directory [%s]: ' "$ASTROHOME_DIR" > /dev/tty
+    local answer=""
+    read -r answer < /dev/tty || true
+    [ -n "$answer" ] && ASTROHOME_DIR="$(expand_tilde "$answer")"
+
+    case "$(classify_dir "$ASTROHOME_DIR")" in
+      missing|empty)
+        log "installing into $ASTROHOME_DIR"
+        return 0
+        ;;
+      checkout)
+        log "existing AstroHome checkout at $ASTROHOME_DIR — it will be updated in place"
+        return 0
+        ;;
+      occupied)
+        warn "$ASTROHOME_DIR exists and is not an AstroHome checkout — not touching it."
+        if [ -d "$ASTROHOME_DIR/data" ] || [ -f "$ASTROHOME_DIR/.env" ]; then
+          warn "it looks like a previous deployment's runtime state. Install the code"
+          warn "somewhere else (e.g. $HOME/astrohome-core), then restore its data at"
+          warn "the wizard's Data step: $ASTROHOME_DIR/data"
+        fi
+        ASTROHOME_DIR="$HOME/astrohome-core"
+        ;;
+    esac
+  done
+}
+
+# Browser-based setup: download the wizard from the public installer repo
+# (or use the checkout's copy), serve it locally, let it drive this same
+# script in engine mode. Returns 1 to fall back to the terminal wizard.
+maybe_launch_gui() {
+  [ "${ASTROHOME_NO_GUI:-0}" = 1 ] && return 1
+  [ "${ASTROHOME_NONINTERACTIVE:-0}" = 1 ] && return 1
+  [ -r /dev/tty ] || return 1
+  local opener=""
+  if [ "$OS" = macos ]; then
+    opener=open
+  elif have_cmd xdg-open; then
+    opener=xdg-open
+  fi
+  [ -n "$opener" ] || return 1
+
+  printf '  Set up in your browser (recommended) or in this terminal? [B/t]: ' > /dev/tty
+  local choice=""
+  read -r choice < /dev/tty || true
+  case "$choice" in t|T) return 1 ;; esac
+
+  local gui_base="${ASTROHOME_GUI_BASE:-https://raw.githubusercontent.com/alome007/astrohome-installer/main}"
+  local gui_dir
+  gui_dir="$(mktemp -d)"
+  local local_repo=""
+  local script_dir
+  script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+  if [ -n "$script_dir" ] && [ -f "$script_dir/scripts/install/setup-gui/server.mjs" ]; then
+    local_repo="$script_dir"
+  else
+    log "downloading setup wizard"
+    curl -fsSL "$gui_base/setup-gui/server.mjs" -o "$gui_dir/server.mjs" &&
+      curl -fsSL "$gui_base/setup-gui/index.html" -o "$gui_dir/index.html" &&
+      curl -fsSL "$gui_base/env.example" -o "$gui_dir/env.example" || {
+      warn "wizard download failed — continuing in the terminal"
+      return 1
+    }
+  fi
+
+  log "setup wizard starting — your browser will open (Ctrl-C here to abort)"
+  local rc=0
+  if [ -n "$local_repo" ]; then
+    node "$local_repo/scripts/install/setup-gui/server.mjs" --local-repo "$local_repo" || rc=$?
+  else
+    node "$gui_dir/server.mjs" --base "$gui_base" || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    die "the setup wizard reported a failed install — the browser log has details; re-run to resume (completed work is reused)"
+  fi
+  return 0
 }
 
 detect_platform() {
@@ -161,6 +269,13 @@ install_support_tools() {
 
 clone_or_update_repo() {
   local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+
+  if [ "$(classify_dir "$ASTROHOME_DIR")" = occupied ]; then
+    die "$ASTROHOME_DIR exists and is not an AstroHome checkout — pick another
+  directory (ASTROHOME_DIR=<path>) rather than overwriting what's there. If it
+  holds a previous deployment's data/, restore it during install with
+  ASTROHOME_RESTORE_FROM=$ASTROHOME_DIR/data"
+  fi
 
   if [ -d "$ASTROHOME_DIR/.git" ]; then
     log "updating $ASTROHOME_DIR"
@@ -434,12 +549,29 @@ EOF
 }
 
 main() {
-  print_banner
   detect_platform
   preflight
   install_runtime
+  if maybe_launch_gui; then
+    exit 0
+  fi
+  choose_install_dir
+  print_banner
   install_support_tools
   clone_or_update_repo
+
+  # A setup front-end (the GUI wizard) collects env values up front and
+  # hands them over as a ready .env; seed-env then keeps it as-is.
+  if [ -n "${ASTROHOME_ENV_FILE:-}" ]; then
+    [ -f "$ASTROHOME_ENV_FILE" ] || die "ASTROHOME_ENV_FILE not found: $ASTROHOME_ENV_FILE"
+    if [ -f "$ASTROHOME_DIR/.env" ]; then
+      warn ".env already exists at $ASTROHOME_DIR — keeping it (ASTROHOME_ENV_FILE ignored)"
+    else
+      install -m 600 "$ASTROHOME_ENV_FILE" "$ASTROHOME_DIR/.env"
+      log "seeded .env from $ASTROHOME_ENV_FILE"
+    fi
+  fi
+
   build_repo
 
   run_subscript seed-env.sh "$ASTROHOME_DIR"
