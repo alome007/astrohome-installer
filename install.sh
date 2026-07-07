@@ -594,15 +594,36 @@ main() {
   clone_or_update_repo
 
   # A setup front-end (the GUI wizard) collects env values up front and
-  # hands them over as a ready .env; seed-env then keeps it as-is.
+  # hands them over as a ready .env. If a .env already exists we REFUSE
+  # rather than keep it: silently keeping a stale .env means the ports,
+  # keys, and everything else the user just chose in the wizard are ignored
+  # (this is exactly what sent the kernel to the old port after a re-install).
+  # Fail fast — before the long build — with copy-paste commands to move or
+  # delete the old file, then re-run.
   if [ -n "${ASTROHOME_ENV_FILE:-}" ]; then
     [ -f "$ASTROHOME_ENV_FILE" ] || die "ASTROHOME_ENV_FILE not found: $ASTROHOME_ENV_FILE"
     if [ -f "$ASTROHOME_DIR/.env" ]; then
-      warn ".env already exists at $ASTROHOME_DIR — keeping it (ASTROHOME_ENV_FILE ignored)"
-    else
-      install -m 600 "$ASTROHOME_ENV_FILE" "$ASTROHOME_DIR/.env"
-      log "seeded .env from $ASTROHOME_ENV_FILE"
+      cat >&2 <<EOF
+
+  ✗ $ASTROHOME_DIR/.env already exists.
+
+    Installing over it would ignore the settings you just chose (ports,
+    provider keys, and the rest). Pick one, then re-run the installer:
+
+      • Keep a copy and use the new settings:
+          mv "$ASTROHOME_DIR/.env" "$ASTROHOME_DIR/.env.backup-\$(date +%Y%m%d%H%M%S)"
+
+      • Discard the old settings entirely:
+          rm "$ASTROHOME_DIR/.env"
+
+      • Or keep the existing config and skip the wizard:
+          ASTROHOME_NO_GUI=1 bash install.sh    (leaves $ASTROHOME_DIR/.env untouched)
+
+EOF
+      die "refusing to overwrite or ignore an existing .env"
     fi
+    install -m 600 "$ASTROHOME_ENV_FILE" "$ASTROHOME_DIR/.env"
+    log "seeded .env from $ASTROHOME_ENV_FILE"
   fi
 
   build_repo
