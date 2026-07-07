@@ -515,20 +515,23 @@ EOF
 }
 
 print_summary() {
-  local public_url health_url
+  local public_url health_url kernel_port local_url
+  kernel_port="$(awk -F= '/^ASTROHOME_GATEWAY_PORT=/{print $2; exit}' "$ASTROHOME_DIR/.env" 2>/dev/null || true)"
+  kernel_port="${kernel_port:-8420}"
+  local_url="http://localhost:$kernel_port"
   public_url="$(awk -F= '/^WEB_BASE_URL=/{sub(/^WEB_BASE_URL=/,""); print; exit}' "$ASTROHOME_DIR/.env" 2>/dev/null || true)"
   if [ -n "$public_url" ]; then
     health_url="$public_url/api/v1/health"
   else
     public_url="(none — local-only install; re-run setup-tunnel.sh to expose publicly)"
-    health_url="http://localhost:8420/api/v1/health"
+    health_url="$local_url/api/v1/health"
   fi
   cat <<EOF
 
 ───────────────────────────────────────────────────────────────
   AstroHome installed at $ASTROHOME_DIR
 ───────────────────────────────────────────────────────────────
-  Kernel:        http://localhost:8420
+  Kernel:        $local_url
   Public URL:    $public_url
   Health:        $health_url
   CLI:           astrohome --help
