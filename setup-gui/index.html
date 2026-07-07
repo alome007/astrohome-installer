@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astro — Installation Record</title>
+<style>
+  :root {
+    --paper: #f7f4ed;
+    --panel: #f0ece1;
+    --ink: #211d16;
+    --muted: #847b6d;
+    --hairline: #e2dccd;
+    --accent: #0e6f66;
+    --pass: #2e7d4f;
+    --fail: #b0392e;
+    --receipt: #1d1a14;
+    --receipt-ink: #e6dfd0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #191612;
+      --panel: #201c17;
+      --ink: #e9e3d6;
+      --muted: #978d7c;
+      --hairline: #322c23;
+      --accent: #37b3a4;
+      --pass: #5fbf85;
+      --fail: #e06b5c;
+      --receipt: #100e0b;
+      --receipt-ink: #d8d1c1;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: 16.5px;
+    line-height: 1.6;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+  .shell { display: grid; grid-template-columns: 264px 1fr; min-height: 100%; }
+  @media (max-width: 860px) { .shell { grid-template-columns: 1fr; } aside.rail { display: none; } }
+
+  aside.rail {
+    border-right: 1px solid var(--hairline);
+    padding: 40px 28px;
+    position: sticky; top: 0; height: 100vh;
+  }
+  .masthead { border-bottom: 3px double var(--ink); padding-bottom: 18px; margin-bottom: 26px; }
+  .masthead .word {
+    font-size: 26px; letter-spacing: 0.32em; font-weight: 600; margin: 0;
+  }
+  .masthead .sub {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); margin: 8px 0 0;
+  }
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li {
+    display: flex; gap: 12px; align-items: baseline;
+    padding: 9px 0; color: var(--muted); font-size: 15px;
+  }
+  ol.steps li .n {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; width: 18px; flex: none;
+  }
+  ol.steps li.current { color: var(--ink); }
+  ol.steps li.current .n { color: var(--accent); }
+  ol.steps li.done { color: var(--ink); }
+  ol.steps li.done .n { color: var(--pass); }
+  .railfoot {
+    position: absolute; bottom: 32px; left: 28px; right: 28px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; color: var(--muted); letter-spacing: 0.08em;
+  }
+
+  main { padding: 44px clamp(24px, 6vw, 72px) 96px; max-width: 760px; }
+
+  .ledger { border: 1px solid var(--hairline); background: var(--panel); margin-bottom: 36px; }
+  .ledger:empty { display: none; }
+  .ledger button {
+    display: flex; width: 100%; gap: 14px; align-items: baseline;
+    background: none; border: 0; border-bottom: 1px solid var(--hairline);
+    padding: 8px 14px; cursor: pointer; text-align: left;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    color: var(--ink);
+  }
+  .ledger button:last-child { border-bottom: 0; }
+  .ledger button .k { color: var(--muted); width: 92px; flex: none; text-transform: lowercase; }
+  .ledger button .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger button .tick { margin-left: auto; color: var(--pass); }
+  .ledger button:hover .k { color: var(--accent); }
+
+  h1 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; margin: 0 0 10px; font-weight: 600; letter-spacing: -0.01em; }
+  p.lead { color: var(--muted); margin: 0 0 30px; max-width: 56ch; }
+
+  label.field { display: block; margin: 22px 0; }
+  label.field .name {
+    display: block;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 7px;
+  }
+  input[type="text"], input[type="password"] {
+    width: 100%; padding: 11px 13px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--hairline); border-radius: 0;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  .hint { font-size: 13.5px; color: var(--muted); margin: 8px 0 0; max-width: 60ch; }
+  .hint.ok { color: var(--pass); }
+  .hint.bad { color: var(--fail); }
+  .help {
+    font-size: 13px; color: var(--muted); margin: 6px 0 0;
+    white-space: pre-line; max-width: 62ch;
+  }
+
+  .choices { display: grid; gap: 12px; margin: 22px 0; }
+  .choice {
+    border: 1px solid var(--hairline); background: var(--panel);
+    padding: 16px 18px; cursor: pointer; text-align: left; font: inherit; color: var(--ink);
+  }
+  .choice[aria-pressed="true"] { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: -2px; }
+  .choice .t { font-weight: 600; display: block; }
+  .choice .d { font-size: 13.5px; color: var(--muted); margin-top: 3px; display: block; }
+  .choice .meta {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px; color: var(--muted); margin-top: 8px; word-break: break-all;
+  }
+
+  .envsection { margin: 34px 0 0; }
+  .envsection > h2 {
+    font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+    border-bottom: 1px solid var(--hairline); padding-bottom: 8px; margin: 0 0 4px;
+    font-weight: 600;
+  }
+  .req { color: var(--fail); }
+  .genned { font-size: 12px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .actions { display: flex; gap: 14px; align-items: center; margin-top: 36px; }
+  button.primary {
+    font: inherit; font-weight: 600; font-size: 15.5px;
+    background: var(--accent); color: var(--paper);
+    border: 1px solid var(--accent); padding: 11px 26px; cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.45; cursor: default; }
+  button.quiet {
+    font: inherit; font-size: 14.5px; background: none; color: var(--muted);
+    border: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  }
+  button.quiet:hover, .choice:hover { color: var(--ink); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .receipt {
+    background: var(--receipt); color: var(--receipt-ink);
+    border: 1px solid var(--hairline);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    line-height: 1.75; padding: 18px 20px; height: 420px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .receipt .ok { color: var(--pass); }
+  .receipt .err { color: var(--fail); }
+
+  .cert { border: 1px solid var(--hairline); padding: 30px 34px; margin-top: 8px; }
+  .cert h2 { margin: 0 0 4px; font-size: 22px; }
+  .cert .stamp {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--pass); margin-bottom: 18px;
+  }
+  .cert dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 18px; margin: 20px 0; font-size: 14.5px; }
+  .cert dt { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .cert dd { margin: 0; word-break: break-all; }
+  .cert a { color: var(--accent); }
+
+  section[hidden] { display: none; }
+  section { animation: arrive 180ms ease; }
+  @keyframes arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { section { animation: none; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="masthead">
+      <p class="word">ASTRO</p>
+      <p class="sub">Installation record</p>
+    </div>
+    <ol class="steps" id="rail"></ol>
+    <div class="railfoot">local setup · 127.0.0.1<br>nothing leaves this machine<br>except the GitHub check</div>
+  </aside>
+
+  <main>
+    <div class="ledger" id="ledger"></div>
+
+    <section id="s-location">
+      <h1>Where should Astro live?</h1>
+      <p class="lead">The code installs into its own directory. Your data stays inside it under <span class="mono">data/</span>, snapshotted nightly.</p>
+      <label class="field"><span class="name">Install directory</span>
+        <input type="text" id="dir" spellcheck="false" autocomplete="off">
+      </label>
+      <p class="hint" id="dir-hint"></p>
+      <div class="actions"><button class="primary" id="dir-next" disabled>Use this location</button></div>
+    </section>
+
+    <section id="s-source" hidden>
+      <h1>Fetch the code</h1>
+      <p class="lead">Astro's core repo is private. A fine-grained token with read-only Contents access on <span class="mono">astrohome-core</span> is all it needs — it is used for the clone and not stored.</p>
+      <label class="field"><span class="name">GitHub owner</span>
+        <input type="text" id="owner" spellcheck="false" autocomplete="off">
+      </label>
+      <label class="field"><span class="name">Personal access token</span>
+        <input type="password" id="ghtoken" autocomplete="off">
+      </label>
+      <p class="hint" id="gh-hint">Create one at github.com → Settings → Developer settings → Fine-grained tokens.</p>
+      <div class="actions">
+        <button class="primary" id="gh-next" disabled>Verify access</button>
+      </div>
+    </section>
+
+    <section id="s-env" hidden>
+      <h1>Configure the household</h1>
+      <p class="lead">Generated from the project's own <span class="mono">.env.example</span> — required fields are marked, secrets are pre-generated, everything can be changed later in <span class="mono">.env</span>.</p>
+      <div id="envform"></div>
+      <div class="actions"><button class="primary" id="env-next">Save configuration</button></div>
+    </section>
+
+    <section id="s-data" hidden>
+      <h1>Astro's memory</h1>
+      <p class="lead">Start with a blank memory, or carry over everything — people, preferences, history — from a previous deployment's data.</p>
+      <div class="choices" id="restore-choices"></div>
+      <label class="field" id="restore-custom-field" hidden><span class="name">Backup path</span>
+        <input type="text" id="restore-path" spellcheck="false" placeholder="~/astrohome/data — or a .db snapshot, backups dir, tar.gz">
+      </label>
+      <p class="hint" id="restore-hint"></p>
+      <div class="actions"><button class="primary" id="data-next" disabled>Continue</button></div>
+    </section>
+
+    <section id="s-access" hidden>
+      <h1>Reaching Astro</h1>
+      <p class="lead">Local-only works on this machine and your home network. A free Cloudflare Tunnel adds a public HTTPS address for phones and WhatsApp — no router changes.</p>
+      <div class="choices">
+        <button class="choice" data-access="local" aria-pressed="true"><span class="t">Local only</span><span class="d">http://localhost:8420 — add a tunnel any time later</span></button>
+        <button class="choice" data-access="token" aria-pressed="false"><span class="t">Cloudflare Tunnel — token</span><span class="d">Paste a tunnel token from the Zero Trust dashboard</span></button>
+      </div>
+      <label class="field" id="tunnel-token-field" hidden><span class="name">Tunnel token</span>
+        <input type="password" id="tunnel-token" autocomplete="off">
+      </label>
+      <div class="actions"><button class="primary" id="access-next">Continue</button></div>
+    </section>
+
+    <section id="s-install" hidden>
+      <h1 id="install-title">Commissioning</h1>
+      <p class="lead" id="install-lead">Review the record above, then begin. The full log is written to <span class="mono">data/install.log</span> inside the install directory.</p>
+      <div class="actions" id="go-actions"><button class="primary" id="go">Install Astro</button></div>
+      <div class="receipt" id="receipt" hidden></div>
+      <div class="cert" id="cert" hidden>
+        <p class="stamp">✓ Commissioned</p>
+        <h2>Astro is installed</h2>
+        <dl id="cert-facts"></dl>
+        <p>Open <a href="http://localhost:8420" target="_blank" rel="noopener">http://localhost:8420</a> to finish household setup — the first-run wizard creates your family's accounts. This setup page can be closed.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const TOKEN = "__SETUP_TOKEN__";
+const api = (path, body) => fetch(`/${TOKEN}/api/${path}`, body === undefined
+  ? undefined
+  : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
+).then(r => r.json());
+
+const STEPS = [
+  { id: "location", title: "Location" },
+  { id: "source", title: "Source" },
+  { id: "env", title: "Configuration" },
+  { id: "data", title: "Memory" },
+  { id: "access", title: "Access" },
+  { id: "install", title: "Commission" },
+];
+const record = {};
+let current = 0;
+let envTemplate = [];
+let restoreChoice = null;
+
+const $ = (id) => document.getElementById(id);
+
+function renderRail() {
+  $("rail").innerHTML = STEPS.map((s, i) => {
+    const cls = i === current ? "current" : i < current ? "done" : "";
+    const marker = i < current ? "✓" : String(i + 1).padStart(2, "0");
+    return `<li class="${cls}"><span class="n">${marker}</span>${s.title}</li>`;
+  }).join("");
+}
+function renderLedger() {
+  $("ledger").innerHTML = Object.entries(record)
+    .map(([k, v]) => `<button data-step="${v.step}"><span class="k">${k}</span><span class="v">${v.text}</span><span class="tick">✓</span></button>`)
+    .join("");
+  for (const btn of $("ledger").querySelectorAll("button")) {
+    btn.addEventListener("click", () => goTo(Number(btn.dataset.step)));
+  }
+}
+function goTo(i) {
+  if (installStarted) return;
+  current = i;
+  STEPS.forEach((s, idx) => { $(`s-${s.id}`).hidden = idx !== i; });
+  renderRail();
+  window.scrollTo({ top: 0 });
+}
+function stamp(key, text) {
+  record[key] = { text, step: current };
+  renderLedger();
+}
+
+let dirTimer = null;
+$("dir").addEventListener("input", () => {
+  clearTimeout(dirTimer);
+  $("dir-next").disabled = true;
+  dirTimer = setTimeout(async () => {
+    const value = $("dir").value.trim();
+    if (value === "") return;
+    const result = await api("validate-dir", { path: value });
+    const hint = $("dir-hint");
+    if (result.kind === "missing" || result.kind === "empty") {
+      hint.textContent = "New install — this directory will be created.";
+      hint.className = "hint ok";
+      $("dir-next").disabled = false;
+    } else if (result.kind === "checkout") {
+      hint.textContent = "Existing AstroHome checkout — it will be updated in place, data untouched.";
+      hint.className = "hint ok";
+      $("dir-next").disabled = false;
+    } else {
+      hint.textContent = result.priorDeployment
+        ? "This holds a previous deployment's files (.env, data). Pick a different directory for the code — you can restore this data at the Memory step."
+        : "Directory exists and is not empty. Pick another location.";
+      hint.className = "hint bad";
+    }
+    $("dir").dataset.resolved = result.path;
+  }, 350);
+});
+$("dir-next").addEventListener("click", () => {
+  stamp("location", $("dir").dataset.resolved);
+  goTo(1);
+});
+
+const ghReady = () => { $("gh-next").disabled = !($("owner").value.trim() && $("ghtoken").value.trim()); };
+$("owner").addEventListener("input", ghReady);
+$("ghtoken").addEventListener("input", ghReady);
+$("gh-next").addEventListener("click", async () => {
+  $("gh-next").disabled = true;
+  const hint = $("gh-hint");
+  hint.textContent = "Checking access…";
+  hint.className = "hint";
+  const result = await api("verify-token", { owner: $("owner").value.trim(), token: $("ghtoken").value });
+  if (result.ok) {
+    stamp("source", `${$("owner").value.trim()}/astrohome-core`);
+    goTo(2);
+  } else {
+    hint.textContent = result.status === 404
+      ? "Token can't see the repo (404) — add astrohome-core to its Selected Repositories."
+      : `Token rejected (HTTP ${result.status}) — check the value.`;
+    hint.className = "hint bad";
+    $("gh-next").disabled = false;
+  }
+});
+
+function renderEnvForm() {
+  const bySection = new Map();
+  for (const f of envTemplate) {
+    if (!bySection.has(f.section)) bySection.set(f.section, []);
+    bySection.get(f.section).push(f);
+  }
+  $("envform").innerHTML = [...bySection.entries()].map(([section, fields]) => `
+    <div class="envsection">
+      <h2>${section || "General"}</h2>
+      ${fields.map((f) => `
+        <label class="field"><span class="name">${f.key}${f.tag === "REQUIRED" ? ' <span class="req">*</span>' : ""}${f.group ? ' <span class="req">*one of</span>' : ""}</span>
+          <input type="text" data-env="${f.key}" ${f.group ? `data-group="${f.group}"` : ""} ${f.tag === "REQUIRED" ? "data-required=1" : ""}
+                 value="${f.generated ?? f.default ?? ""}" spellcheck="false" autocomplete="off">
+          ${f.generated ? '<span class="genned">generated for you — keep or replace</span>' : ""}
+          ${f.help ? `<span class="help">${f.help.replace(/</g, "&lt;")}</span>` : ""}
+        </label>`).join("")}
+    </div>`).join("");
+}
+$("env-next").addEventListener("click", () => {
+  const inputs = [...document.querySelectorAll("[data-env]")];
+  for (const input of inputs.filter((i) => i.dataset.required)) {
+    if (input.value.trim() === "") {
+      input.focus();
+      input.scrollIntoView({ block: "center" });
+      return;
+    }
+  }
+  const groups = new Map();
+  for (const input of inputs.filter((i) => i.dataset.group)) {
+    const g = input.dataset.group;
+    groups.set(g, (groups.get(g) ?? 0) + (input.value.trim() ? 1 : 0));
+  }
+  for (const [, satisfied] of groups) {
+    if (satisfied === 0) {
+      const first = inputs.find((i) => i.dataset.group);
+      first.focus();
+      first.scrollIntoView({ block: "center" });
+      return;
+    }
+  }
+  const filled = inputs.filter((i) => i.value.trim() !== "").length;
+  stamp("config", `${filled} values set`);
+  goTo(3);
+});
+
+function renderRestoreChoices(priorData) {
+  const cards = [
+    `<button class="choice" data-restore="fresh" aria-pressed="false"><span class="t">Start fresh</span><span class="d">A blank memory — Astro meets the household for the first time</span></button>`,
+    ...priorData.map((p, i) => `
+      <button class="choice" data-restore="prior-${i}" data-path="${p.db ? p.db.path : p.path}" aria-pressed="false">
+        <span class="t">Restore detected data</span>
+        <span class="d">${p.kind === "backups-dir" ? "Newest snapshot in" : "Database found at"} ${p.path}</span>
+        <span class="meta">${p.db ? `${p.db.path} · ${p.db.sizeMb} MB · modified ${p.db.modified.slice(0, 10)}` : ""}</span>
+      </button>`),
+    `<button class="choice" data-restore="custom" aria-pressed="false"><span class="t">Restore from a path I'll provide</span><span class="d">A snapshot .db, a backups directory, a data/ directory, or a tar.gz</span></button>`,
+  ];
+  $("restore-choices").innerHTML = cards.join("");
+  for (const btn of $("restore-choices").querySelectorAll(".choice")) {
+    btn.addEventListener("click", () => {
+      for (const other of $("restore-choices").querySelectorAll(".choice")) other.setAttribute("aria-pressed", "false");
+      btn.setAttribute("aria-pressed", "true");
+      restoreChoice = btn.dataset.restore;
+      $("restore-custom-field").hidden = restoreChoice !== "custom";
+      $("restore-hint").textContent = "";
+      $("data-next").disabled = restoreChoice === "custom" && !$("restore-path").dataset.ok;
+    });
+  }
+}
+let restoreTimer = null;
+$("restore-path").addEventListener("input", () => {
+  clearTimeout(restoreTimer);
+  $("data-next").disabled = true;
+  delete $("restore-path").dataset.ok;
+  restoreTimer = setTimeout(async () => {
+    const value = $("restore-path").value.trim();
+    if (value === "") return;
+    const result = await api("inspect-restore", { path: value });
+    const hint = $("restore-hint");
+    if (result.ok) {
+      hint.textContent = result.db
+        ? `Found: ${result.db.path} (${result.db.sizeMb} MB). Integrity is fully verified during install.`
+        : `Archive accepted: ${result.path}`;
+      hint.className = "hint ok";
+      $("restore-path").dataset.ok = result.db ? result.db.path : result.path;
+      $("data-next").disabled = false;
+    } else {
+      hint.textContent = `${result.reason} — ${result.path}`;
+      hint.className = "hint bad";
+    }
+  }, 350);
+});
+$("data-next").addEventListener("click", () => {
+  let source = null;
+  if (restoreChoice?.startsWith("prior-")) {
+    source = document.querySelector(`[data-restore="${restoreChoice}"]`).dataset.path;
+  } else if (restoreChoice === "custom") {
+    source = $("restore-path").dataset.ok;
+  }
+  record.restoreFrom = source;
+  stamp("memory", source ?? "fresh start");
+  goTo(4);
+});
+
+let accessMode = "local";
+for (const btn of document.querySelectorAll("[data-access]")) {
+  btn.addEventListener("click", () => {
+    for (const other of document.querySelectorAll("[data-access]")) other.setAttribute("aria-pressed", "false");
+    btn.setAttribute("aria-pressed", "true");
+    accessMode = btn.dataset.access;
+    $("tunnel-token-field").hidden = accessMode !== "token";
+  });
+}
+$("access-next").addEventListener("click", () => {
+  stamp("access", accessMode === "local" ? "local only" : "cloudflare tunnel");
+  goTo(5);
+});
+
+let installStarted = false;
+$("go").addEventListener("click", async () => {
+  installStarted = true;
+  $("go-actions").hidden = true;
+  $("install-lead").textContent = "Commissioning in progress — this takes a few minutes on first install.";
+  $("receipt").hidden = false;
+
+  const env = {};
+  for (const input of document.querySelectorAll("[data-env]")) {
+    if (input.value.trim() !== "") env[input.dataset.env] = input.value.trim();
+  }
+  await api("install", {
+    installDir: record.location.text,
+    owner: $("owner").value.trim(),
+    token: $("ghtoken").value,
+    env,
+    restoreFrom: record.restoreFrom,
+    tunnel: accessMode === "token" ? { token: $("tunnel-token").value } : null,
+  });
+
+  const receipt = $("receipt");
+  const source = new EventSource(`/${TOKEN}/api/progress`);
+  source.onmessage = (event) => {
+    const line = JSON.parse(event.data).replace(/\[[0-9;]*m/g, "");
+    const div = document.createElement("div");
+    div.textContent = line;
+    if (/✓|complete|verified|ready/i.test(line)) div.className = "ok";
+    if (/✗|failed|error|fatal/i.test(line)) div.className = "err";
+    receipt.appendChild(div);
+    receipt.scrollTop = receipt.scrollHeight;
+  };
+  source.onerror = async () => {
+    source.close();
+    const result = await api("result");
+    if (result.phase === "done") {
+      $("install-title").textContent = "Record complete";
+      $("install-lead").textContent = "";
+      $("cert-facts").innerHTML = Object.entries(record)
+        .filter(([, v]) => v.text !== undefined)
+        .map(([k, v]) => `<dt>${k}</dt><dd>${v.text}</dd>`)
+        .join("");
+      $("cert").hidden = false;
+      $("cert").scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      $("install-lead").textContent = "Install failed — the last log lines above say why. Fix and re-run this wizard; completed work is reused.";
+      $("install-lead").className = "hint bad";
+    }
+  };
+});
+
+(async () => {
+  const state = await api("state");
+  envTemplate = state.envTemplate;
+  $("dir").value = state.defaultDir;
+  $("dir").dispatchEvent(new Event("input"));
+  renderEnvForm();
+  renderRestoreChoices(state.priorData);
+  renderRail();
+})();
+</script>
+</body>
+</html>
