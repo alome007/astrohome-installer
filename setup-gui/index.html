@@ -391,9 +391,20 @@ $("dir").addEventListener("input", () => {
       hint.className = "hint ok";
       $("dir-next").disabled = false;
     } else if (result.kind === "checkout") {
-      hint.textContent = "Existing AstroHome checkout — it will be updated in place, data untouched.";
-      hint.className = "hint ok";
-      $("dir-next").disabled = false;
+      if (result.hasEnv) {
+        // The wizard's chosen config (ports, keys) can't apply over an
+        // existing .env — the installer refuses rather than ignore it.
+        // Catch it here so it's fixed before the whole flow + build.
+        hint.innerHTML =
+          `This checkout already has a <span class="mono">.env</span> — your new settings can't be applied over it. Move or delete it first, then reload:<br>` +
+          `<span class="mono">mv ${result.path}/.env ${result.path}/.env.backup</span><br>` +
+          `<span class="mono">rm ${result.path}/.env</span>`;
+        hint.className = "hint bad";
+      } else {
+        hint.textContent = "Existing AstroHome checkout — it will be updated in place, data untouched.";
+        hint.className = "hint ok";
+        $("dir-next").disabled = false;
+      }
     } else {
       hint.textContent = result.priorDeployment
         ? "This holds a previous deployment's files (.env, data). Pick a different directory for the code — you can restore this data at the Memory step."

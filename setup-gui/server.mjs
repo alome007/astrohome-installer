@@ -349,10 +349,10 @@ const server = createServer(async (req, res) => {
       const { path } = await readBody(req);
       const expanded = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(path);
       const kind = classifyDir(expanded);
+      const hasEnv = existsSync(join(expanded, ".env"));
       const prior =
-        kind === "occupied" &&
-        (existsSync(join(expanded, "data")) || existsSync(join(expanded, ".env")));
-      json(res, 200, { path: expanded, kind, priorDeployment: prior });
+        kind === "occupied" && (existsSync(join(expanded, "data")) || hasEnv);
+      json(res, 200, { path: expanded, kind, priorDeployment: prior, hasEnv });
       return;
     }
     if (route === "/api/verify-token" && req.method === "POST") {
