@@ -590,9 +590,8 @@ print_summary() {
   Update:        astrohome-update           (snapshots DB + WhatsApp auth first)
   Restore data:  bash $ASTROHOME_DIR/scripts/install/restore-data.sh $ASTROHOME_DIR <snapshot|dir|url>
                  (stop services first; current data is kept aside, never deleted)
-  Uninstall:     bash $ASTROHOME_DIR/scripts/uninstall.sh
-                 (removes services + CLI links, keeps data/; --purge deletes
-                  everything after writing a final DB snapshot to ~)
+  Uninstall:     astrohome uninstall        (--purge also deletes data, after a
+                 final DB snapshot to ~; or run scripts/uninstall.sh directly)
 
   Next steps:
     • WhatsApp pairing:     astrohome service logs --service whatsapp -f
