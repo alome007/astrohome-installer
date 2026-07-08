@@ -586,6 +586,8 @@ print_summary() {
   Service ctl:   astrohome service [start|stop|restart|status|logs]
   Edit config:   astrohome env             (browser GUI; or: env edit|set|get|list)
                  saves .env and restarts the kernel to apply
+  Skills:        astrohome skills install <owner/repo#path | url | path>
+                 (also: skills list|uninstall|update — like a skill marketplace)
   Logs:          $ASTROHOME_DIR/data/logs/  (or: astrohome service logs)
   Update:        astrohome-update           (snapshots DB + WhatsApp auth first)
   Restore data:  bash $ASTROHOME_DIR/scripts/install/restore-data.sh $ASTROHOME_DIR <snapshot|dir|url>
