@@ -270,6 +270,32 @@ preflight() {
   fi
 }
 
+# fnm is installed with --skip-shell (so it doesn't rewrite the profile mid-run),
+# which leaves an interactive shell with no `node` — and the `astrohome` CLI's
+# `#!/usr/bin/env node` then can't resolve. Add fnm to the profile so new shells
+# (and the CLI) find node.
+setup_shell_path() {
+  local rcs shell_name
+  if [ "$OS" = macos ]; then
+    rcs="$HOME/.zshrc $HOME/.profile"
+    shell_name=zsh
+  else
+    rcs="$HOME/.bashrc $HOME/.profile"
+    shell_name=bash
+  fi
+  local block
+  block="# >>> astrohome fnm >>>
+export PATH=\"\$HOME/.local/share/fnm:\$HOME/Library/Application Support/fnm:\$PATH\"
+eval \"\$(fnm env --shell $shell_name 2>/dev/null)\"
+# <<< astrohome fnm <<<"
+  local rc
+  for rc in $rcs; do
+    [ -e "$rc" ] || touch "$rc"
+    grep -q "astrohome fnm" "$rc" 2>/dev/null || printf '\n%s\n' "$block" >> "$rc"
+  done
+  log "added fnm to the shell profile (node + astrohome CLI available in new shells)"
+}
+
 install_runtime() {
   if ! have_cmd fnm; then
     # fnm's installer unzips its release; minimal server images (a fresh cloud
@@ -301,6 +327,8 @@ install_runtime() {
   fi
   have_cmd pnpm || die "pnpm installation failed"
   log "pnpm $(pnpm --version)"
+
+  setup_shell_path
 }
 
 install_support_tools() {
