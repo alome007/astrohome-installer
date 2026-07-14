@@ -743,7 +743,7 @@ print_summary() {
     • Mobile app config:    point KERNEL_URL at $public_url
                             (or use Firebase Remote Config — see docs/mobile-setup.md)
     • Connect Home Assistant (if you run HA at home, over Tailscale):
-                            bash $ASTROHOME_DIR/scripts/install/setup-tailscale-ha.sh $ASTROHOME_DIR
+                            astrohome setup ha
 EOF
   if [ "${WEB_BUILD_FAILED:-0}" = 1 ]; then
     echo "  ! Web UI build failed — investigate before reporting install complete."
