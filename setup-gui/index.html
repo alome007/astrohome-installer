@@ -144,6 +144,21 @@
   .req { color: var(--fail); }
   .genned { font-size: 12px; color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
+  .gistnote {
+    border: 1px solid var(--hairline); border-left: 2px solid var(--accent);
+    padding: 13px 16px; margin: 0 0 6px;
+  }
+  .gistnote .lead {
+    display: block; font-size: 13px; color: var(--ink); letter-spacing: 0.01em;
+  }
+  .gistnote .lead::before { content: "✓ "; color: var(--accent); }
+  .gistnote .keys {
+    display: block; margin-top: 7px; word-break: break-word;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px; color: var(--muted);
+  }
+  .gistnote .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
+
   /* Configuration sub-stepper (Essentials → Optional) */
   .substep {
     display: flex; gap: 10px; margin: 0 0 28px;
@@ -347,6 +362,11 @@ let current = 0;
 let envTemplate = [];
 let restoreChoice = null;
 let restoreSource = null;
+// Keys pre-loaded from the operator's private secrets gist after GitHub auth.
+// Their values live server-side only (never sent to the browser) and are
+// merged into .env at install time — so these fields are hidden from the
+// config form and count as already-satisfied for the one-of provider group.
+let gistKeys = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -429,7 +449,13 @@ $("gh-next").addEventListener("click", async () => {
   hint.className = "hint";
   const result = await api("verify-token", { owner: $("owner").value.trim(), token: $("ghtoken").value });
   if (result.ok) {
+    gistKeys = Array.isArray(result.gistKeys) ? result.gistKeys : [];
     stamp("source", `${$("owner").value.trim()}/astrohome-core`);
+    if (gistKeys.length > 0) stamp("secrets", `${gistKeys.length} from gist`);
+    // Re-render the config form now that gist keys are known — they were
+    // unknown at page load, so the initial render (which hides gist-provided
+    // fields and shows the summary note) must run again.
+    renderEnvForm();
     goTo(2);
   } else {
     hint.textContent = result.status === 404
@@ -474,9 +500,10 @@ const PORT_MANAGED = new Set([
 ]);
 
 function renderEnvForm() {
+  const managed = new Set([...PORT_MANAGED, ...gistKeys]);
   const bySection = new Map();
   for (const f of envTemplate) {
-    if (PORT_MANAGED.has(f.key)) continue;
+    if (managed.has(f.key)) continue;
     if (!bySection.has(f.section)) bySection.set(f.section, []);
     bySection.get(f.section).push(f);
   }
@@ -488,12 +515,19 @@ function renderEnvForm() {
   }
   hasOptional = optional.length > 0;
 
-  $("envform-essentials").innerHTML = essential
-    .map(
-      ([section, fields]) =>
-        `<div class="envsection"><h2>${section || "General"}</h2>${fields.map(renderField).join("")}</div>`,
-    )
-    .join("");
+  const gistNote =
+    gistKeys.length > 0
+      ? `<div class="gistnote"><span class="lead">${gistKeys.length} secret${gistKeys.length === 1 ? "" : "s"} loaded from your gist</span><span class="keys">${gistKeys.join(" · ")}</span><span class="sub">Written to <span class="mono">.env</span> at install — not shown here, not editable in the wizard.</span></div>`
+      : "";
+
+  $("envform-essentials").innerHTML =
+    gistNote +
+    essential
+      .map(
+        ([section, fields]) =>
+          `<div class="envsection"><h2>${section || "General"}</h2>${fields.map(renderField).join("")}</div>`,
+      )
+      .join("");
 
   $("envform-optional").innerHTML = optional
     .map(
@@ -544,13 +578,20 @@ function essentialsSatisfied() {
       return false;
     }
   }
+  const membersByGroup = new Map();
+  for (const f of envTemplate) {
+    if (!f.group) continue;
+    if (!membersByGroup.has(f.group)) membersByGroup.set(f.group, new Set());
+    membersByGroup.get(f.group).add(f.key);
+  }
   const groups = new Map();
   for (const input of inputs.filter((i) => i.dataset.group)) {
     const g = input.dataset.group;
     groups.set(g, (groups.get(g) ?? 0) + (input.value.trim() ? 1 : 0));
   }
-  for (const [, satisfied] of groups) {
-    if (satisfied === 0) {
+  for (const [group, satisfied] of groups) {
+    const gistCovers = gistKeys.some((k) => membersByGroup.get(group)?.has(k));
+    if (satisfied === 0 && !gistCovers) {
       const first = inputs.find((i) => i.dataset.group);
       first.focus();
       first.scrollIntoView({ block: "center" });
