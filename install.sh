@@ -49,6 +49,12 @@ need_cmd() { have_cmd "$1" || die "missing required command: $1"; }
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO="sudo"
 
+# Keep apt fully non-interactive: a server's needrestart/debconf otherwise pops
+# a whiptail dialog (pending-kernel notice, service-restart list) that hangs the
+# install waiting for a keypress.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
 print_banner() {
   cat >&2 <<EOF
 
