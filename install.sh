@@ -145,15 +145,23 @@ maybe_launch_gui() {
   [ "${ASTROHOME_NO_GUI:-0}" = 1 ] && return 1
   [ "${ASTROHOME_NONINTERACTIVE:-0}" = 1 ] && return 1
   [ -r /dev/tty ] || return 1
-  local opener=""
+
+  # A local opener means a browser is on this host (desktop/laptop). None (a
+  # headless cloud box) is not a dead end: we still offer the wizard and serve
+  # it back to the operator's own machine, printing a reachable URL.
+  local opener="" remote=0
   if [ "$OS" = macos ]; then
     opener=open
   elif have_cmd xdg-open; then
     opener=xdg-open
   fi
-  [ -n "$opener" ] || return 1
+  [ -n "$opener" ] || remote=1
 
-  printf '  Set up in your browser (recommended) or in this terminal? [B/t]: ' > /dev/tty
+  if [ "$remote" = 1 ]; then
+    printf '  Set up in a browser on your own computer, or in this terminal? [B/t]: ' > /dev/tty
+  else
+    printf '  Set up in your browser (recommended) or in this terminal? [B/t]: ' > /dev/tty
+  fi
   local choice=""
   read -r choice < /dev/tty || true
   case "$choice" in t|T) return 1 ;; esac
@@ -176,12 +184,53 @@ maybe_launch_gui() {
     }
   fi
 
-  log "setup wizard starting — your browser will open (Ctrl-C here to abort)"
+  # How the wizard is reached. On a desktop it binds loopback and opens the
+  # browser. On a headless box it can't open anything, so it prints the URL and
+  # we tell the operator how to reach it — securely over an SSH tunnel by
+  # default, or on the public IP with ASTROHOME_GUI_PUBLIC=1 (plain HTTP, so the
+  # keys entered cross the network unencrypted — only on a trusted network).
+  local gui_flags=() port="${ASTROHOME_GUI_PORT:-8423}"
+  gui_flags+=(--port "$port")
+  if [ "$remote" = 1 ]; then
+    gui_flags+=(--no-open)
+    local ip
+    ip="$(printf '%s' "${SSH_CONNECTION:-}" | awk '{print $3}')"
+    [ -n "$ip" ] || ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [ -n "$ip" ] || ip="<this-server-ip>"
+    if [ "${ASTROHOME_GUI_PUBLIC:-0}" = 1 ]; then
+      gui_flags+=(--host 0.0.0.0 --url-host "$ip")
+      cat > /dev/tty <<EOF
+
+  ▸ No browser on this server — the wizard will listen on the public IP.
+    Open the URL that prints below on your own computer.
+    ⚠  Plain HTTP: the keys you enter cross the internet unencrypted. Only use
+       ASTROHOME_GUI_PUBLIC=1 on a trusted network — otherwise Ctrl-C and use
+       the SSH-tunnel method (re-run without ASTROHOME_GUI_PUBLIC).
+    If port $port is firewalled, use the SSH-tunnel method instead.
+
+EOF
+    else
+      cat > /dev/tty <<EOF
+
+  ▸ No browser on this server — reach the wizard securely over SSH:
+      1) On your own computer, run:
+           ssh -L $port:localhost:$port root@$ip
+      2) Leave it open, then open the URL that prints below (it starts with
+         http://127.0.0.1:$port/) in your browser.
+    (To serve it on the public IP instead — less secure, plain HTTP — Ctrl-C
+     and re-run with ASTROHOME_GUI_PUBLIC=1.)
+
+EOF
+    fi
+  fi
+
+  log "setup wizard starting (Ctrl-C here to abort)"
   local rc=0
   if [ -n "$local_repo" ]; then
-    node "$local_repo/scripts/install/setup-gui/server.mjs" --local-repo "$local_repo" || rc=$?
+    node "$local_repo/scripts/install/setup-gui/server.mjs" --local-repo "$local_repo" "${gui_flags[@]}" || rc=$?
   else
-    node "$gui_dir/server.mjs" --base "$gui_base" || rc=$?
+    node "$gui_dir/server.mjs" --base "$gui_base" "${gui_flags[@]}" || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     die "the setup wizard reported a failed install — the browser log has details; re-run to resume (completed work is reused)"
@@ -241,6 +290,10 @@ install_support_tools() {
   local need=()
   have_cmd cloudflared || need+=(cloudflared)
   have_cmd jq          || need+=(jq)
+  # gh enables token-free `gh auth login`; only pull it when no token was given.
+  if [ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+    have_cmd gh || need+=(gh)
+  fi
   [ "${#need[@]}" -gt 0 ] || return 0
 
   log "installing: ${need[*]}"
@@ -266,12 +319,23 @@ install_support_tools() {
       jq)
         sudo apt-get update -qq && sudo apt-get install -y jq
         ;;
+      gh)
+        # GitHub CLI via the official apt repo (enables token-free `gh auth login`).
+        sudo mkdir -p -m 755 /etc/apt/keyrings
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+        sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=${deb_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+          | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+        sudo apt-get update -qq && sudo apt-get install -y gh
+        ;;
     esac
   done
 }
 
 clone_or_update_repo() {
   local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  local gh_authed=0
 
   if [ "$(classify_dir "$ASTROHOME_DIR")" = occupied ]; then
     die "$ASTROHOME_DIR exists and is not an AstroHome checkout — pick another
@@ -280,31 +344,67 @@ clone_or_update_repo() {
   ASTROHOME_RESTORE_FROM=$ASTROHOME_DIR/data"
   fi
 
+  # Token-free path: with no token supplied and the GitHub CLI present, offer
+  # `gh auth login` (a device/web flow — nothing to create or paste) and wire
+  # git's credential helper so clone/fetch work over HTTPS without a token.
+  if [ -z "$token" ] && have_cmd gh; then
+    if ! gh auth status >/dev/null 2>&1; then
+      if [ "${ASTROHOME_NONINTERACTIVE:-0}" != 1 ] && [ -r /dev/tty ]; then
+        printf '  Authenticate with GitHub CLI now (browser/device login, no token to paste)? [Y/n]: ' > /dev/tty
+        local gh_ans=""
+        read -r gh_ans < /dev/tty || true
+        case "$gh_ans" in
+          n|N) : ;;
+          *) gh auth login --hostname github.com --git-protocol https --web < /dev/tty ||
+               warn "gh auth login did not complete — falling back to a token" ;;
+        esac
+      fi
+    fi
+    if gh auth status >/dev/null 2>&1; then
+      gh auth setup-git >/dev/null 2>&1 || true
+      gh_authed=1
+      [ -n "${ASTROHOME_OWNER:-}" ] || ASTROHOME_OWNER="$(gh api user --jq .login 2>/dev/null || true)"
+      log "authenticated via GitHub CLI (gh) — no token needed"
+    fi
+  fi
+
   if [ -d "$ASTROHOME_DIR/.git" ]; then
     log "updating $ASTROHOME_DIR"
-    local origin_url fetch_url="origin"
-    origin_url="$(git -C "$ASTROHOME_DIR" remote get-url origin 2>/dev/null || true)"
-    # GitHub's git-over-HTTPS rejects `Authorization: Bearer <PAT>` with
-    # "invalid credentials" — the token must ride as basic-auth. Use the same
-    # URL-embedded x-access-token form the clone path uses; fetch from it
-    # directly so the token is never persisted into the remote. Prompt for a
-    # token here too (the update path used to only read $GH_TOKEN, so a
-    # re-run on an existing checkout silently had no credentials).
-    if [[ "$origin_url" == https://github.com/* ]]; then
-      if [ -z "$token" ]; then
-        log "a GitHub token is needed to update this private checkout"
-        token="$(prompt_tty 'GitHub token (hidden)' 1)"
+    if [ "$gh_authed" = 1 ]; then
+      git -C "$ASTROHOME_DIR" fetch --quiet origin "$ASTROHOME_BRANCH" ||
+        die "git fetch failed — check 'gh auth status' and that the account can read the repo"
+    else
+      local origin_url fetch_url="origin"
+      origin_url="$(git -C "$ASTROHOME_DIR" remote get-url origin 2>/dev/null || true)"
+      # GitHub's git-over-HTTPS rejects `Authorization: Bearer <PAT>` with
+      # "invalid credentials" — the token must ride as basic-auth. Use the same
+      # URL-embedded x-access-token form the clone path uses; fetch from it
+      # directly so the token is never persisted into the remote. Prompt for a
+      # token here too (the update path used to only read $GH_TOKEN, so a
+      # re-run on an existing checkout silently had no credentials).
+      if [[ "$origin_url" == https://github.com/* ]]; then
+        if [ -z "$token" ]; then
+          log "a GitHub token is needed to update this private checkout"
+          token="$(prompt_tty 'GitHub token (hidden)' 1)"
+        fi
+        fetch_url="${origin_url/https:\/\//https://x-access-token:${token}@}"
       fi
-      fetch_url="${origin_url/https:\/\//https://x-access-token:${token}@}"
+      git -C "$ASTROHOME_DIR" fetch --quiet "$fetch_url" "$ASTROHOME_BRANCH" ||
+        die "git fetch failed — the token may be expired or lack Contents:Read on the repo. Regenerate at https://github.com/settings/personal-access-tokens"
     fi
-    git -C "$ASTROHOME_DIR" fetch --quiet "$fetch_url" "$ASTROHOME_BRANCH" ||
-      die "git fetch failed — the token may be expired or lack Contents:Read on the repo. Regenerate at https://github.com/settings/personal-access-tokens"
     git -C "$ASTROHOME_DIR" checkout --quiet "$ASTROHOME_BRANCH"
     git -C "$ASTROHOME_DIR" merge --ff-only FETCH_HEAD
     return
   fi
 
   local owner="${ASTROHOME_OWNER:-}"
+
+  # gh-authenticated clone: git uses the gh credential helper, no token embedded.
+  if [ "$gh_authed" = 1 ] && [ -z "$ASTROHOME_REPO" ]; then
+    [ -n "$owner" ] || owner="$(prompt_tty 'GitHub owner (user or org)')"
+    ASTROHOME_REPO="https://github.com/${owner}/${ASTROHOME_REPO_NAME}.git"
+  fi
+
   if [ -z "$ASTROHOME_REPO" ]; then
     log "this repo is private — a GitHub token is needed to clone it"
     log "create one at https://github.com/settings/personal-access-tokens"
@@ -327,7 +427,9 @@ clone_or_update_repo() {
   fi
 
   log "cloning $ASTROHOME_REPO"
-  if [ -n "$token" ] && [[ "$ASTROHOME_REPO" == https://* ]]; then
+  if [ "$gh_authed" = 1 ]; then
+    git clone --branch "$ASTROHOME_BRANCH" "$ASTROHOME_REPO" "$ASTROHOME_DIR"
+  elif [ -n "$token" ] && [[ "$ASTROHOME_REPO" == https://* ]]; then
     local authed_url="${ASTROHOME_REPO/https:\/\//https://x-access-token:${token}@}"
     git clone --branch "$ASTROHOME_BRANCH" "$authed_url" "$ASTROHOME_DIR"
     git -C "$ASTROHOME_DIR" remote set-url origin "$ASTROHOME_REPO"
@@ -601,6 +703,8 @@ print_summary() {
     • Confirm running:      astrohome service status
     • Mobile app config:    point KERNEL_URL at $public_url
                             (or use Firebase Remote Config — see docs/mobile-setup.md)
+    • Connect Home Assistant (if you run HA at home, over Tailscale):
+                            bash $ASTROHOME_DIR/scripts/install/setup-tailscale-ha.sh $ASTROHOME_DIR
 EOF
   if [ "${WEB_BUILD_FAILED:-0}" = 1 ]; then
     echo "  ! Web UI build failed — investigate before reporting install complete."
