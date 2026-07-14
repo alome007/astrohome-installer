@@ -346,8 +346,22 @@ async function startInstall(config) {
   const installSh = join(WORK, "install.sh");
   writeFileSync(installSh, await loadAsset("install.sh"), { mode: 0o755 });
   const envFile = join(WORK, "env");
-  const mergedValues = { ...state.gistSecrets, ...(config.env ?? {}) };
-  writeFileSync(envFile, buildEnvFile(state.envTemplate, mergedValues), { mode: 0o600 });
+  // Home Assistant is a dedicated post-install step (over Tailscale for a cloud
+  // box), so drop any HA values (e.g. a home address carried in the gist) —
+  // they don't belong in this box's .env and are set later by setup-tailscale-ha.
+  const { HA_URL: _haUrl, HA_ACCESS_TOKEN: _haToken, ...values } = {
+    ...state.gistSecrets,
+    ...(config.env ?? {}),
+  };
+  writeFileSync(envFile, buildEnvFile(state.envTemplate, values), { mode: 0o600 });
+
+  // Firebase service-account JSON is a file, not an env value: stage it to a
+  // temp file the installer copies into config/secrets/ after the repo clones.
+  let fcmFile = null;
+  if (typeof config.fcmJson === "string" && config.fcmJson.trim() !== "") {
+    fcmFile = join(WORK, "fcm-service-account.json");
+    writeFileSync(fcmFile, config.fcmJson, { mode: 0o600 });
+  }
 
   const env = {
     ...process.env,
@@ -359,9 +373,11 @@ async function startInstall(config) {
     ASTROHOME_ENV_FILE: envFile,
     ...(config.restoreFrom ? { ASTROHOME_RESTORE_FROM: config.restoreFrom } : {}),
     ...(config.restoreFrom ? {} : { ASTROHOME_SKIP_RESTORE: "1" }),
+    ...(config.caddyDomain ? { ASTROHOME_CADDY_DOMAIN: config.caddyDomain } : {}),
     ...(config.tunnel?.domain ? { ASTROHOME_DOMAIN: config.tunnel.domain } : {}),
     ...(config.tunnel?.token ? { ASTROHOME_TUNNEL_TOKEN: config.tunnel.token } : {}),
-    ...(config.tunnel ? {} : { ASTROHOME_SKIP_TUNNEL: "1" }),
+    ...(config.tunnel || config.caddyDomain ? {} : { ASTROHOME_SKIP_TUNNEL: "1" }),
+    ...(fcmFile ? { ASTROHOME_FCM_JSON_FILE: fcmFile } : {}),
     ...(LOCAL_REPO !== null ? { ASTROHOME_REPO: LOCAL_REPO } : {}),
   };
 

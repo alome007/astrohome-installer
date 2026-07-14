@@ -106,13 +106,14 @@
     font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
     color: var(--muted); margin-bottom: 7px;
   }
-  input[type="text"], input[type="password"] {
-    width: 100%; padding: 11px 13px;
+  input[type="text"], input[type="password"], textarea {
+    width: 100%; padding: 11px 13px; box-sizing: border-box;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px;
     color: var(--ink); background: var(--paper);
     border: 1px solid var(--hairline); border-radius: 0;
   }
-  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 84px; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
   .hint { font-size: 13.5px; color: var(--muted); margin: 8px 0 0; max-width: 60ch; }
   .hint.ok { color: var(--pass); }
   .hint.bad { color: var(--fail); }
@@ -313,10 +314,19 @@
 
       <div class="choices">
         <button class="choice" data-access="local" aria-pressed="true"><span class="t">Local only</span><span class="d" id="local-desc">http://localhost:8420 — add a tunnel any time later</span></button>
+        <button class="choice" data-access="caddy" aria-pressed="false"><span class="t">Domain + HTTPS (Let's Encrypt)</span><span class="d">Public box with its own domain — Caddy fetches a real certificate automatically</span></button>
         <button class="choice" data-access="token" aria-pressed="false"><span class="t">Cloudflare Tunnel — token</span><span class="d">Paste a tunnel token from the Zero Trust dashboard</span></button>
       </div>
+      <label class="field" id="caddy-domain-field" hidden><span class="name">Domain</span>
+        <input type="text" id="caddy-domain" placeholder="astro.example.com" spellcheck="false" autocomplete="off">
+        <span class="help">Point a DNS A record for this hostname at this server's public IP first. Ports 80 and 443 must be open; Caddy obtains the certificate automatically.</span>
+      </label>
       <label class="field" id="tunnel-token-field" hidden><span class="name">Tunnel token</span>
         <input type="password" id="tunnel-token" autocomplete="off">
+      </label>
+      <label class="field"><span class="name">Firebase service-account JSON — optional (mobile push)</span>
+        <textarea id="fcm-json" rows="4" placeholder="Paste the full service-account JSON to enable Android/iOS push, or leave blank." spellcheck="false" autocomplete="off"></textarea>
+        <span class="help">Firebase console → Project settings → Service accounts → Generate new private key. Saved to config/secrets/fcm-service-account.json.</span>
       </label>
       <div class="actions"><button class="primary" id="access-next">Continue</button></div>
     </section>
@@ -499,8 +509,13 @@ const PORT_MANAGED = new Set([
   "KERNEL_PUBLIC_URL",
 ]);
 
+// Configured outside the env form: Home Assistant is a dedicated post-install
+// step (over Tailscale for a cloud box), and FCM is pasted as JSON on the
+// access step. Hidden here so the generic form doesn't ask for them.
+const DEFERRED = new Set(["HA_URL", "HA_ACCESS_TOKEN", "FCM_SERVICE_ACCOUNT_PATH"]);
+
 function renderEnvForm() {
-  const managed = new Set([...PORT_MANAGED, ...gistKeys]);
+  const managed = new Set([...PORT_MANAGED, ...DEFERRED, ...gistKeys]);
   const bySection = new Map();
   for (const f of envTemplate) {
     if (managed.has(f.key)) continue;
@@ -686,6 +701,7 @@ for (const btn of document.querySelectorAll("[data-access]")) {
     btn.setAttribute("aria-pressed", "true");
     accessMode = btn.dataset.access;
     $("tunnel-token-field").hidden = accessMode !== "token";
+    $("caddy-domain-field").hidden = accessMode !== "caddy";
   });
 }
 
@@ -726,7 +742,14 @@ $("access-next").addEventListener("click", () => {
   }
   ports = p;
   stamp("ports", `kernel ${p.kernel} · whatsapp ${p.whatsapp}`);
-  stamp("access", accessMode === "local" ? "local only" : "cloudflare tunnel");
+  stamp(
+    "access",
+    accessMode === "local"
+      ? "local only"
+      : accessMode === "caddy"
+        ? `https · ${$("caddy-domain").value.trim() || "domain"}`
+        : "cloudflare tunnel",
+  );
   goTo(5);
 });
 
@@ -756,6 +779,8 @@ $("go").addEventListener("click", async () => {
     env,
     restoreFrom: restoreSource,
     tunnel: accessMode === "token" ? { token: $("tunnel-token").value } : null,
+    caddyDomain: accessMode === "caddy" ? $("caddy-domain").value.trim() : null,
+    fcmJson: $("fcm-json").value.trim(),
   });
 
   const receipt = $("receipt");
