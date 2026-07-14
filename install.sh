@@ -44,6 +44,11 @@ die()  { printf '\033[1;31m[%s]\033[0m %s\n' "$TAG" "$*" >&2; exit 1; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 need_cmd() { have_cmd "$1" || die "missing required command: $1"; }
 
+# apt/dpkg steps need root. On a root shell (typical fresh cloud box) run them
+# directly; otherwise elevate with sudo.
+SUDO=""
+[ "$(id -u)" -eq 0 ] || SUDO="sudo"
+
 print_banner() {
   cat >&2 <<EOF
 
@@ -261,6 +266,12 @@ preflight() {
 
 install_runtime() {
   if ! have_cmd fnm; then
+    # fnm's installer unzips its release; minimal server images (a fresh cloud
+    # VM) ship without unzip, which aborts the install — ensure it first.
+    if [ "$OS" = linux ] && ! have_cmd unzip; then
+      log "installing unzip (fnm needs it)"
+      $SUDO apt-get update -qq && $SUDO apt-get install -y unzip
+    fi
     log "installing fnm"
     curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
   fi
@@ -313,21 +324,21 @@ install_support_tools() {
       cloudflared)
         local tmp; tmp="$(mktemp --suffix=.deb)"
         curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${deb_arch}.deb" -o "$tmp"
-        sudo dpkg -i "$tmp"
+        $SUDO dpkg -i "$tmp"
         rm -f "$tmp"
         ;;
       jq)
-        sudo apt-get update -qq && sudo apt-get install -y jq
+        $SUDO apt-get update -qq && $SUDO apt-get install -y jq
         ;;
       gh)
         # GitHub CLI via the official apt repo (enables token-free `gh auth login`).
-        sudo mkdir -p -m 755 /etc/apt/keyrings
+        $SUDO mkdir -p -m 755 /etc/apt/keyrings
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-          | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
-        sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+          | $SUDO tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+        $SUDO chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
         echo "deb [arch=${deb_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-          | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-        sudo apt-get update -qq && sudo apt-get install -y gh
+          | $SUDO tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+        $SUDO apt-get update -qq && $SUDO apt-get install -y gh
         ;;
     esac
   done
@@ -504,6 +515,27 @@ run_subscript() {
   bash "$path" "$@"
 }
 
+install_fcm_credentials() {
+  [ -n "${ASTROHOME_FCM_JSON_FILE:-}" ] || return 0
+  if [ ! -f "$ASTROHOME_FCM_JSON_FILE" ]; then
+    warn "ASTROHOME_FCM_JSON_FILE set but not found: $ASTROHOME_FCM_JSON_FILE — skipping FCM"
+    return 0
+  fi
+  local dest="$ASTROHOME_DIR/config/secrets/fcm-service-account.json"
+  mkdir -p "$(dirname "$dest")"
+  install -m 600 "$ASTROHOME_FCM_JSON_FILE" "$dest"
+  # Pin the absolute path so the kernel finds it regardless of its working dir.
+  local env_file="$ASTROHOME_DIR/.env" tmp
+  if [ -f "$env_file" ]; then
+    tmp="$(mktemp)"
+    grep -v '^FCM_SERVICE_ACCOUNT_PATH=' "$env_file" > "$tmp" 2>/dev/null || true
+    printf 'FCM_SERVICE_ACCOUNT_PATH=%s\n' "$dest" >> "$tmp"
+    cat "$tmp" > "$env_file"
+    rm -f "$tmp"
+  fi
+  log "installed Firebase service-account.json → $dest"
+}
+
 configure_data_restore() {
   if [ "${ASTROHOME_SKIP_RESTORE:-0}" = 1 ]; then
     log "data restore skipped (ASTROHOME_SKIP_RESTORE=1) — starting fresh"
@@ -628,6 +660,13 @@ configure_remote_access() {
     kp="$(awk -F= '/^ASTROHOME_GATEWAY_PORT=/{print $2; exit}' "$ASTROHOME_DIR/.env" 2>/dev/null || true)"
     log "remote access skipped (ASTROHOME_SKIP_TUNNEL=1) — kernel will only be reachable on localhost:${kp:-8420}"
     return 0
+  fi
+
+  # A public-IP box with its own domain: terminate TLS on the box with Caddy +
+  # Let's Encrypt instead of a tunnel.
+  if [ -n "${ASTROHOME_CADDY_DOMAIN:-}" ]; then
+    run_subscript setup-caddy.sh "$ASTROHOME_DIR"
+    return $?
   fi
 
   if [ "${ASTROHOME_NONINTERACTIVE:-0}" = 1 ]; then
@@ -770,6 +809,7 @@ EOF
   build_repo
 
   run_subscript seed-env.sh "$ASTROHOME_DIR"
+  install_fcm_credentials
   configure_data_restore
   configure_remote_access
   run_subscript link-cli.sh "$ASTROHOME_DIR"
